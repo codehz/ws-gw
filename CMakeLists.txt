@@ -2,7 +2,9 @@ cmake_minimum_required(VERSION 3.15)
 
 project(ws-gw)
 
-set(CMAKE_CXX_STANDARD 20)
+set (CMAKE_CXX_STANDARD 20)
+set (CMAKE_CXX_STANDARD_REQUIRED ON)
+set (CMAKE_CXX_EXTENSIONS ON)
 
 find_package(websocketpp CONFIG REQUIRED)
 find_package(Flatbuffers CONFIG REQUIRED)

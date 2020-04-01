@@ -30,15 +30,15 @@ void Service::OnMessage(
     flatbuffers::Verifier verifier{(uint8_t const *)msg->get_payload().c_str(),
                                    msg->get_payload().size()};
 
-    if (!flag) {
+    if (flag == 1) {
       auto resp = flatbuffers::GetRoot<proto::Service::HandshakeResponse>(
           msg->get_payload().c_str());
       if (!resp->Verify(verifier))
         return;
       if (resp->magic()->string_view() != "WS-GATEWAY OK")
         throw MagicError{"WS-GATEWAY OK", resp->magic()->c_str()};
-      flag = true;
-      cv.notify_one();
+      flag = 2;
+      cv.notify_all();
     } else {
       auto recv = flatbuffers::GetRoot<proto::Service::Receive::ReceivePacket>(
           msg->get_payload().c_str());
@@ -84,14 +84,8 @@ void Service::Connect(const std::string &endpoint) {
   ws.set_message_handler(std::bind(&Service::OnMessage, this, _1, _2));
   ws.set_close_handler([this](auto) { ws.stop(); });
   ws.set_fail_handler([this](websocketpp::connection_hdl hdl) {
-    try {
-      throw ConnectFailedError{};
-    } catch (...) {
-      ep = std::current_exception();
-      if (!flag)
-        flag = true;
-      cv.notify_all();
-    }
+    ep = std::make_exception_ptr(ConnectFailedError{});
+    ws.stop();
   });
   ws.set_open_handler([this](websocketpp::connection_hdl co) {
     conhdr = co;
@@ -103,45 +97,52 @@ void Service::Connect(const std::string &endpoint) {
     try {
       ws.send(co, data, size, opcode::BINARY);
     } catch (...) {
-      ep = std::current_exception();
-      flag = true;
-      cv.notify_all();
+      if (!ep)
+        ep = std::current_exception();
+      ws.stop();
     }
   });
   auto con = ws.get_connection(endpoint, ec);
   if (ec)
     throw ParseFailed(ec);
   ws.connect(con);
+
   std::thread{[this] {
-    ws.run();
-    try {
-      throw DisconnectedError{};
-    } catch (...) {
-      ep = std::current_exception();
-      if (flag)
-        flag = false;
-      cv.notify_all();
+    {
+      std::unique_lock lk{mtx};
+      cv.wait(lk, [this] { return flag.load() == 1; });
     }
+
+    ws.run();
+    if (!ep)
+      ep = std::make_exception_ptr(DisconnectedError{});
+    flag = -1;
+    cv.notify_all();
   }}.detach();
 
-  std::unique_lock lk{mtx};
-  cv.wait(lk, [this] { return flag.load(); });
+  flag = 1;
+  cv.notify_all();
+
+  {
+    std::unique_lock lk{mtx};
+    cv.wait(lk, [this] { return flag.load() != 1; });
+  }
   if (ep) {
     ws.close(con, close_status::abnormal_close, "");
-    flag = false;
+    flag = 0;
     std::rethrow_exception(ep);
   }
 }
 
 void Service::Wait() {
   std::unique_lock lk{mtx};
-  cv.wait(lk, [this] { return !flag.load(); });
+  cv.wait(lk, [this] { return flag.load() == -1; });
   if (ep)
     std::rethrow_exception(ep);
 }
 
 void Service::Broadcast(const std::string_view &key, BufferView data) {
-  if (!flag)
+  if (flag != 2)
     return;
   flatbuffers::FlatBufferBuilder buf{256};
   auto skey = buf.CreateString(key);

@@ -142,7 +142,7 @@ class Service {
   client ws;
   Handler defaultHandler;
   std::map<std::string, Handler> mapped;
-  std::atomic_bool flag;
+  std::atomic_int8_t flag = 0;
   std::mutex mtx;
   std::condition_variable cv;
   std::exception_ptr ep;

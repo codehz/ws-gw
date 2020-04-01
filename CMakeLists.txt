@@ -4,13 +4,13 @@ project(ws-gw)
 
 set(CMAKE_CXX_STANDARD 20)
 
-
 find_package(websocketpp CONFIG REQUIRED)
 find_package(Flatbuffers CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 
 if(WIN32)
   add_definitions(-DNOMINMAX -DBOOST_ASIO_DISABLE_CO_AWAIT -D_SILENCE_CLANG_COROUTINE_MESSAGE -D_SILENCE_CLANG_CONCEPTS_MESSAGE)
+  add_compile_options(/EHsc)
 endif()
 
 add_library(ws-gt src/service.cpp)

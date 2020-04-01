@@ -1,8 +1,12 @@
 #include <exception>
-#include <flatbuffers/flatbuffers.h>
 #include <functional>
-
+#include <mutex>
 #include <stdexcept>
+#include <thread>
+
+#include <flatbuffers/flatbuffers.h>
+
+#include <websocketpp/close.hpp>
 #include <websocketpp/common/system_error.hpp>
 #include <websocketpp/frame.hpp>
 #include <websocketpp/logger/levels.hpp>
@@ -14,6 +18,7 @@
 namespace WsGw {
 using namespace std::placeholders;
 namespace opcode = websocketpp::frame::opcode;
+namespace close_status = websocketpp::close::status;
 
 void Service::OnMessage(
     websocketpp::connection_hdl hdl,
@@ -25,17 +30,20 @@ void Service::OnMessage(
     flatbuffers::Verifier verifier{(uint8_t const *)msg->get_payload().c_str(),
                                    msg->get_payload().size()};
 
-    if (!booted) {
+    if (!flag) {
       auto resp = flatbuffers::GetRoot<proto::Service::HandshakeResponse>(
           msg->get_payload().c_str());
-      if (!resp->Verify(verifier)) return;
+      if (!resp->Verify(verifier))
+        return;
       if (resp->magic()->string_view() != "WS-GATEWAY OK")
         throw MagicError{"WS-GATEWAY OK", resp->magic()->c_str()};
-      booted = true;
+      flag = true;
+      cv.notify_one();
     } else {
       auto recv = flatbuffers::GetRoot<proto::Service::Receive::ReceivePacket>(
           msg->get_payload().c_str());
-      if (!recv->Verify(verifier)) return;
+      if (!recv->Verify(verifier))
+        return;
       auto req = recv->packet_as_Request();
       if (req) {
         auto id = req->id();
@@ -63,7 +71,7 @@ void Service::OnMessage(
     }
   } catch (...) {
     ep = std::current_exception();
-    ws.stop();
+    ws.close(hdl, close_status::no_status, "");
   }
 }
 
@@ -74,6 +82,17 @@ void Service::Connect(const std::string &endpoint) {
   ws.clear_access_channels(websocketpp::log::alevel::all);
   ws.clear_error_channels(websocketpp::log::elevel::all);
   ws.set_message_handler(std::bind(&Service::OnMessage, this, _1, _2));
+  ws.set_close_handler([this](auto) { ws.stop(); });
+  ws.set_fail_handler([this](websocketpp::connection_hdl hdl) {
+    try {
+      throw ConnectFailedError{};
+    } catch (...) {
+      ep = std::current_exception();
+      if (!flag)
+        flag = true;
+      cv.notify_all();
+    }
+  });
   ws.set_open_handler([this](websocketpp::connection_hdl co) {
     conhdr = co;
     flatbuffers::FlatBufferBuilder buf{64};
@@ -85,25 +104,44 @@ void Service::Connect(const std::string &endpoint) {
       ws.send(co, data, size, opcode::BINARY);
     } catch (...) {
       ep = std::current_exception();
-      ws.stop();
+      flag = true;
+      cv.notify_all();
     }
   });
   auto con = ws.get_connection(endpoint, ec);
   if (ec)
     throw ParseFailed(ec);
   ws.connect(con);
-  ws.run();
+  std::thread{[this] {
+    ws.run();
+    try {
+      throw DisconnectedError{};
+    } catch (...) {
+      ep = std::current_exception();
+      if (flag)
+        flag = false;
+      cv.notify_all();
+    }
+  }}.detach();
+
+  std::unique_lock lk{mtx};
+  cv.wait(lk, [this] { return flag.load(); });
+  if (ep) {
+    ws.close(con, close_status::abnormal_close, "");
+    flag = false;
+    std::rethrow_exception(ep);
+  }
+}
+
+void Service::Wait() {
+  std::unique_lock lk{mtx};
+  cv.wait(lk, [this] { return !flag.load(); });
   if (ep)
     std::rethrow_exception(ep);
 }
 
-void Service::Disconnect() {
-  ws.stop();
-  booted = false;
-}
-
 void Service::Broadcast(const std::string_view &key, BufferView data) {
-  if (!booted)
+  if (!flag)
     return;
   flatbuffers::FlatBufferBuilder buf{256};
   auto skey = buf.CreateString(key);
@@ -114,7 +152,7 @@ void Service::Broadcast(const std::string_view &key, BufferView data) {
     ws.send(conhdr, buf.GetBufferPointer(), buf.GetSize(), opcode::BINARY);
   } catch (...) {
     ep = std::current_exception();
-    ws.stop();
+    ws.close(conhdr, close_status::abnormal_close, "");
   }
 }
 

@@ -1,10 +1,13 @@
 #pragma once
 
+#include <atomic>
+#include <condition_variable>
 #include <cstddef>
 #include <exception>
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -114,6 +117,12 @@ struct MagicError : std::runtime_error {
       : runtime_error("Expected magic " + (std::string)expected + ", got " +
                       actual) {}
 };
+struct ConnectFailedError : std::runtime_error {
+  ConnectFailedError() : runtime_error("Failed to connect") {}
+};
+struct DisconnectedError : std::runtime_error {
+  DisconnectedError() : runtime_error("Disconnected") {}
+};
 
 struct ParseFailed : std::exception {
   websocketpp::lib::error_code ec;
@@ -133,7 +142,9 @@ class Service {
   client ws;
   Handler defaultHandler;
   std::map<std::string, Handler> mapped;
-  bool booted;
+  std::atomic_bool flag;
+  std::mutex mtx;
+  std::condition_variable cv;
   std::exception_ptr ep;
   websocketpp::connection_hdl conhdr;
 
@@ -151,7 +162,7 @@ public:
 
   void Connect(std::string const &endpoint);
 
-  void Disconnect();
+  void Wait();
 };
 
 } // namespace WsGw

@@ -17,53 +17,42 @@
 
 namespace WsGw {
 using namespace std::placeholders;
-namespace opcode = websocketpp::frame::opcode;
+namespace opcode       = websocketpp::frame::opcode;
 namespace close_status = websocketpp::close::status;
 
-void Service::OnMessage(
-    websocketpp::connection_hdl hdl,
-    websocketpp::config::asio_client::message_type::ptr msg) {
+void Service::OnMessage(websocketpp::connection_hdl hdl, websocketpp::config::asio_client::message_type::ptr msg) {
   try {
-    if (msg->get_opcode() == opcode::TEXT)
-      throw RemoteException{msg->get_payload()};
+    if (msg->get_opcode() == opcode::TEXT) throw RemoteException{msg->get_payload()};
 
-    flatbuffers::Verifier verifier{(uint8_t const *)msg->get_payload().c_str(),
-                                   msg->get_payload().size()};
+    flatbuffers::Verifier verifier{(uint8_t const *) msg->get_payload().c_str(), msg->get_payload().size()};
 
     if (flag == 1) {
-      auto resp = flatbuffers::GetRoot<proto::Service::HandshakeResponse>(
-          msg->get_payload().c_str());
-      if (!resp->Verify(verifier))
-        return;
-      if (resp->magic()->string_view() != "WS-GATEWAY OK")
-        throw MagicError{"WS-GATEWAY OK", resp->magic()->c_str()};
+      auto resp = flatbuffers::GetRoot<proto::Service::HandshakeResponse>(msg->get_payload().c_str());
+      if (!resp->Verify(verifier)) return;
+      if (resp->magic()->string_view() != "WS-GATEWAY OK") throw MagicError{"WS-GATEWAY OK", resp->magic()->c_str()};
       flag = 2;
       cv.notify_all();
     } else {
-      auto recv = flatbuffers::GetRoot<proto::Service::Receive::ReceivePacket>(
-          msg->get_payload().c_str());
-      if (!recv->Verify(verifier))
-        return;
+      auto recv = flatbuffers::GetRoot<proto::Service::Receive::ReceivePacket>(msg->get_payload().c_str());
+      if (!recv->Verify(verifier)) return;
       auto req = recv->packet_as_Request();
       if (req) {
-        auto id = req->id();
-        auto key = req->key()->str();
+        auto id      = req->id();
+        auto key     = req->key()->str();
         auto payload = req->payload();
-        auto it = mapped.find(key);
+        auto it      = mapped.find(key);
         auto handler = it == mapped.end() ? defaultHandler : it->second;
         flatbuffers::FlatBufferBuilder buf{256};
         flatbuffers::Offset<proto::Service::Send::SendPacket> packet;
         try {
-          auto ret = handler({payload->data(), payload->size()});
+          auto ret     = handler({payload->data(), payload->size()});
           auto payload = buf.CreateVector(ret.data(), ret.size());
           auto respobj = proto::Service::Send::CreateResponse(buf, id, payload);
-          packet = proto::Service::Send::CreateSendPacket(
-              buf, proto::Service::Send::Send_Response, respobj.Union());
+          packet = proto::Service::Send::CreateSendPacket(buf, proto::Service::Send::Send_Response, respobj.Union());
         } catch (std::exception const &ex) {
           auto exinfo = proto::CreateExceptionInfoDirect(buf, ex.what());
-          auto exobj = proto::Service::Send::CreateException(buf, id, exinfo);
-          packet = proto::Service::Send::CreateSendPacket(
-              buf, proto::Service::Send::Send_Exception, exobj.Union());
+          auto exobj  = proto::Service::Send::CreateException(buf, id, exinfo);
+          packet = proto::Service::Send::CreateSendPacket(buf, proto::Service::Send::Send_Exception, exobj.Union());
         }
         buf.Finish(packet);
         ws.send(hdl, buf.GetBufferPointer(), buf.GetSize(), opcode::BINARY);
@@ -75,7 +64,7 @@ void Service::OnMessage(
   }
 }
 
-void Service::Connect(const std::string &endpoint) {
+void Service::Connect(const std::string &endpoint, ServiceDesc desc) {
   websocketpp::lib::error_code ec;
   ws.init_asio();
   ws.set_user_agent("ws-gw/0");
@@ -87,24 +76,22 @@ void Service::Connect(const std::string &endpoint) {
     ep = std::make_exception_ptr(ConnectFailedError{});
     ws.stop();
   });
-  ws.set_open_handler([this](websocketpp::connection_hdl co) {
+  ws.set_open_handler([this, desc{std::move(desc)}](websocketpp::connection_hdl co) {
     conhdr = co;
     flatbuffers::FlatBufferBuilder buf{64};
-    buf.Finish(proto::Service::CreateHandshakeDirect(buf, "WS-GATEWAY", 0,
-                                                     "test", "test", "0.0.0"));
+    buf.Finish(proto::Service::CreateHandshakeDirect(
+        buf, "WS-GATEWAY", 0, desc.name.c_str(), desc.identifier.c_str(), desc.version.c_str()));
     auto data = buf.GetBufferPointer();
     auto size = buf.GetSize();
     try {
       ws.send(co, data, size, opcode::BINARY);
     } catch (...) {
-      if (!ep)
-        ep = std::current_exception();
+      if (!ep) ep = std::current_exception();
       ws.stop();
     }
   });
   auto con = ws.get_connection(endpoint, ec);
-  if (ec)
-    throw ParseFailed(ec);
+  if (ec) throw ParseFailed(ec);
   ws.connect(con);
 
   std::thread{[this] {
@@ -114,8 +101,7 @@ void Service::Connect(const std::string &endpoint) {
     }
 
     ws.run();
-    if (!ep)
-      ep = std::make_exception_ptr(DisconnectedError{});
+    if (!ep) ep = std::make_exception_ptr(DisconnectedError{});
     flag = -1;
     cv.notify_all();
   }}.detach();
@@ -137,17 +123,15 @@ void Service::Connect(const std::string &endpoint) {
 void Service::Wait() {
   std::unique_lock lk{mtx};
   cv.wait(lk, [this] { return flag.load() == -1; });
-  if (ep)
-    std::rethrow_exception(ep);
+  if (ep) std::rethrow_exception(ep);
 }
 
 void Service::Broadcast(const std::string_view &key, BufferView data) {
-  if (flag != 2)
-    return;
+  if (flag != 2) return;
   flatbuffers::FlatBufferBuilder buf{256};
-  auto skey = buf.CreateString(key);
+  auto skey    = buf.CreateString(key);
   auto payload = buf.CreateVector(data.data(), data.size());
-  auto broad = proto::Service::Send::CreateBroadcast(buf, skey, payload);
+  auto broad   = proto::Service::Send::CreateBroadcast(buf, skey, payload);
   buf.Finish(broad);
   try {
     ws.send(conhdr, buf.GetBufferPointer(), buf.GetSize(), opcode::BINARY);

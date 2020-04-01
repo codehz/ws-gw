@@ -18,13 +18,13 @@
 #include <websocketpp/config/asio_no_tls_client.hpp>
 
 #ifdef WIN32
-#ifdef WsGwImpl
-#define WsGwAPI __declspec(dllexport)
+#  ifdef WsGwImpl
+#    define WsGwAPI __declspec(dllexport)
+#  else
+#    define WsGwAPI __declspec(dllimport)
+#  endif
 #else
-#define WsGwAPI __declspec(dllimport)
-#endif
-#else
-#define WsGwAPI
+#  define WsGwAPI
 #endif
 
 namespace WsGw {
@@ -42,16 +42,10 @@ class BufferView {
 public:
   uint8_t const *data() const noexcept { return storage.data(); }
   size_t size() const noexcept { return storage.size(); }
-  operator std::string() const noexcept {
-    return {(char const *)data(), size()};
-  }
-  operator std::basic_string<uint8_t>() const noexcept {
-    return {data(), size()};
-  }
+  operator std::string() const noexcept { return {(char const *) data(), size()}; }
+  operator std::basic_string<uint8_t>() const noexcept { return {data(), size()}; }
   operator std::basic_string_view<uint8_t>() const noexcept { return storage; }
-  operator std::string_view() const noexcept {
-    return {(char const *)storage.data(), storage.size()};
-  }
+  operator std::string_view() const noexcept { return {(char const *) storage.data(), storage.size()}; }
 };
 
 class Buffer;
@@ -62,7 +56,7 @@ class BufferImpl {
 public:
   virtual ~BufferImpl() {}
   virtual uint8_t const *data() const noexcept = 0;
-  virtual size_t size() const noexcept = 0;
+  virtual size_t size() const noexcept         = 0;
 };
 
 class BufferImplString : public BufferImpl {
@@ -72,9 +66,7 @@ class BufferImplString : public BufferImpl {
 public:
   BufferImplString(std::string data) : storage(std::move(data)) {}
 
-  uint8_t const *data() const noexcept {
-    return (uint8_t const *)storage.data();
-  }
+  uint8_t const *data() const noexcept { return (uint8_t const *) storage.data(); }
 
   size_t size() const noexcept { return storage.size(); }
 };
@@ -84,8 +76,7 @@ class BufferImplBuilder : public BufferImpl {
   friend class Buffer;
 
 public:
-  BufferImplBuilder(flatbuffers::FlatBufferBuilder &&orig)
-      : storage(std::move(orig)) {}
+  BufferImplBuilder(flatbuffers::FlatBufferBuilder &&orig) : storage(std::move(orig)) {}
 
   uint8_t const *data() const noexcept { return storage.GetBufferPointer(); }
 
@@ -98,24 +89,15 @@ class Buffer {
 public:
   Buffer() : impl() {}
   Buffer(std::string str) : impl(std::make_unique<BufferImplString>(str)) {}
-  Buffer(flatbuffers::FlatBufferBuilder &&builder)
-      : impl(std::make_unique<BufferImplBuilder>(std::move(builder))) {}
+  Buffer(flatbuffers::FlatBufferBuilder &&builder) : impl(std::make_unique<BufferImplBuilder>(std::move(builder))) {}
 
   uint8_t const *data() const noexcept { return impl ? impl->data() : nullptr; }
   size_t size() const noexcept { return impl ? impl->size() : 0; }
 
-  operator std::string() const noexcept {
-    return {(char const *)data(), size()};
-  }
-  operator std::basic_string<uint8_t>() const noexcept {
-    return {data(), size()};
-  }
-  operator std::basic_string_view<uint8_t>() const noexcept {
-    return {data(), size()};
-  }
-  operator std::string_view() const noexcept {
-    return {(char const *)data(), size()};
-  }
+  operator std::string() const noexcept { return {(char const *) data(), size()}; }
+  operator std::basic_string<uint8_t>() const noexcept { return {data(), size()}; }
+  operator std::basic_string_view<uint8_t>() const noexcept { return {data(), size()}; }
+  operator std::string_view() const noexcept { return {(char const *) data(), size()}; }
 
   std::string str() { return *this; }
 };
@@ -124,8 +106,7 @@ using Handler = std::function<Buffer(BufferView const &)>;
 
 struct MagicError : std::runtime_error {
   MagicError(char const *expected, char const *actual)
-      : runtime_error("Expected magic " + (std::string)expected + ", got " +
-                      actual) {}
+      : runtime_error("Expected magic " + (std::string) expected + ", got " + actual) {}
 };
 struct ConnectFailedError : std::runtime_error {
   ConnectFailedError() : runtime_error("Failed to connect") {}
@@ -147,6 +128,10 @@ struct RemoteException : std::runtime_error {
   RemoteException(std::string data) : runtime_error(std::move(data)) {}
 };
 
+struct ServiceDesc {
+  std::string name, identifier, version;
+};
+
 class Service {
   using client = websocketpp::client<websocketpp::config::asio_client>;
   client ws;
@@ -158,19 +143,16 @@ class Service {
   std::exception_ptr ep;
   websocketpp::connection_hdl conhdr;
 
-  void OnMessage(websocketpp::connection_hdl hdl,
-                 websocketpp::config::asio_client::message_type::ptr msg);
+  void OnMessage(websocketpp::connection_hdl hdl, websocketpp::config::asio_client::message_type::ptr msg);
 
 public:
   Service(Handler defaultHandler) : defaultHandler(defaultHandler) {}
 
-  void RegisterHandler(std::string const &name, Handler handler) {
-    mapped.emplace(name, handler);
-  }
+  void RegisterHandler(std::string const &name, Handler handler) { mapped.emplace(name, handler); }
 
   WsGwAPI void Broadcast(std::string_view const &key, BufferView data);
 
-  WsGwAPI void Connect(std::string const &endpoint);
+  WsGwAPI void Connect(std::string const &endpoint, ServiceDesc desc);
 
   WsGwAPI void Wait();
 };

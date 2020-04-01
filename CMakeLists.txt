@@ -10,7 +10,7 @@ find_package(Flatbuffers CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 
 if(WIN32)
-  add_definitions(-DNOMINMAX -DBOOST_ASIO_DISABLE_CO_AWAIT -D_SILENCE_CLANG_COROUTINE_MESSAGE)
+  add_definitions(-DNOMINMAX -DBOOST_ASIO_DISABLE_CO_AWAIT -D_SILENCE_CLANG_COROUTINE_MESSAGE -D_SILENCE_CLANG_CONCEPTS_MESSAGE)
 endif()
 
 add_library(ws-gt src/service.cpp)

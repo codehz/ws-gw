@@ -15,12 +15,9 @@ if(WIN32)
   add_compile_options(/EHsc)
 endif()
 
-add_library(ws-gw SHARED src/service.cpp)
+add_library(ws-gw src/service.cpp)
 target_include_directories(ws-gw PUBLIC include)
 target_link_libraries(ws-gw PUBLIC websocketpp::websocketpp flatbuffers::flatbuffers Threads::Threads)
-if(WIN32)
-  target_compile_definitions(ws-gw PRIVATE -DWsGwImpl)
-endif()
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   add_executable(test test.cpp)

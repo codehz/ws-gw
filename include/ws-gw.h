@@ -17,16 +17,6 @@
 #include <websocketpp/common/system_error.hpp>
 #include <websocketpp/config/asio_no_tls_client.hpp>
 
-#ifdef WIN32
-#  ifdef WsGwImpl
-#    define WsGwAPI __declspec(dllexport)
-#  else
-#    define WsGwAPI __declspec(dllimport)
-#  endif
-#else
-#  define WsGwAPI
-#endif
-
 namespace WsGw {
 
 class Service;
@@ -150,11 +140,11 @@ public:
 
   void RegisterHandler(std::string const &name, Handler handler) { mapped.emplace(name, handler); }
 
-  WsGwAPI void Broadcast(std::string_view const &key, BufferView data);
+  void Broadcast(std::string_view const &key, BufferView data);
 
-  WsGwAPI void Connect(std::string const &endpoint, ServiceDesc desc);
+  void Connect(std::string const &endpoint, ServiceDesc desc);
 
-  WsGwAPI void Wait();
+  void Wait();
 };
 
 } // namespace WsGw

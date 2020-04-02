@@ -3,6 +3,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
+#include <cstdint>
 #include <exception>
 #include <functional>
 #include <map>
@@ -25,11 +26,16 @@ class BufferView {
   friend class Service;
   std::basic_string_view<uint8_t> storage;
 
-  BufferView(uint8_t const *data, size_t len) : storage(data, len) {}
-  ~BufferView() {}
   BufferView &operator=(BufferView &rhs) = delete;
 
 public:
+  BufferView(uint8_t const *data, size_t len) : storage(data, len) {}
+  BufferView(std::string const &data) : storage((uint8_t const *) data.data(), data.size()) {}
+  BufferView(std::string_view data) : storage((uint8_t const *) data.data(), data.size()) {}
+  BufferView(std::basic_string<uint8_t> const &data) : storage(data) {}
+  BufferView(std::basic_string_view<uint8_t> const &data) : storage(data) {}
+  BufferView(flatbuffers::FlatBufferBuilder const &builder) : storage(builder.GetBufferPointer(), builder.GetSize()) {}
+
   uint8_t const *data() const noexcept { return storage.data(); }
   size_t size() const noexcept { return storage.size(); }
   operator std::string() const noexcept { return {(char const *) data(), size()}; }

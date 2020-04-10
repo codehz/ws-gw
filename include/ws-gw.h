@@ -161,6 +161,7 @@ class Service {
   std::condition_variable cv;
   std::exception_ptr ep;
   websocketpp::connection_hdl conhdr;
+  std::function<void(std::exception_ptr)> onstop;
 
   void OnMessage(websocketpp::connection_hdl hdl, websocketpp::config::asio_client::message_type::ptr msg);
 
@@ -172,9 +173,11 @@ public:
     mapped.emplace(name, [=](auto buffer, auto cb) {
       try {
         cb(nullptr, handler(buffer));
-      } catch (...) { cb(std::current_exception(), {}); }
+      } catch (std::exception const &ex) { cb(std::make_exception_ptr(ex), {}); }
     });
   }
+
+  void OnStop(std::function<void(std::exception_ptr)> fn) { onstop = fn; }
 
   void Broadcast(std::string_view const &key, BufferView data);
 

@@ -63,8 +63,8 @@ void Service::OnMessage(websocketpp::connection_hdl hdl, websocketpp::config::as
         });
       }
     }
-  } catch (...) {
-    ep = std::current_exception();
+  } catch (std::exception const &ex) {
+    ep = std::make_exception_ptr(ex);
     ws.close(hdl, close_status::no_status, "");
   }
 }
@@ -90,8 +90,8 @@ void Service::Connect(const std::string &endpoint, ServiceDesc desc) {
     auto size = buf.GetSize();
     try {
       ws.send(co, data, size, opcode::BINARY);
-    } catch (...) {
-      if (!ep) ep = std::current_exception();
+    } catch (std::exception const &ex) {
+      if (!ep) ep = std::make_exception_ptr(ex);
       ws.stop();
     }
   });
@@ -106,6 +106,7 @@ void Service::Connect(const std::string &endpoint, ServiceDesc desc) {
     }
 
     ws.run();
+    if (onstop) onstop(ep);
     if (!ep) ep = std::make_exception_ptr(DisconnectedError{});
     flag = -1;
     cv.notify_all();
@@ -137,11 +138,12 @@ void Service::Broadcast(const std::string_view &key, BufferView data) {
   auto skey    = buf.CreateString(key);
   auto payload = buf.CreateVector(data.data(), data.size());
   auto broad   = proto::Service::Send::CreateBroadcast(buf, skey, payload);
-  buf.Finish(broad);
+  auto packet  = proto::Service::Send::CreateSendPacket(buf, proto::Service::Send::Send_Broadcast, broad.Union());
+  buf.Finish(packet);
   try {
     ws.send(conhdr, buf.GetBufferPointer(), buf.GetSize(), opcode::BINARY);
-  } catch (...) {
-    ep = std::current_exception();
+  } catch (std::exception const &ex) {
+    ep = std::make_exception_ptr(ex);
     ws.close(conhdr, close_status::abnormal_close, "");
   }
 }

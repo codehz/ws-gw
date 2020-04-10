@@ -21,6 +21,7 @@
 namespace WsGw {
 
 class Service;
+class Buffer;
 
 class BufferView {
   friend class Service;
@@ -29,6 +30,8 @@ class BufferView {
   BufferView &operator=(BufferView &rhs) = delete;
 
 public:
+  BufferView() {}
+  BufferView(Buffer const &buffer);
   BufferView(uint8_t const *data, size_t len) : storage(data, len) {}
   BufferView(std::string const &data) : storage((uint8_t const *) data.data(), data.size()) {}
   BufferView(std::string_view data) : storage((uint8_t const *) data.data(), data.size()) {}
@@ -61,6 +64,20 @@ class BufferImplString : public BufferImpl {
 
 public:
   BufferImplString(std::string data) : storage(std::move(data)) {}
+  BufferImplString(char const *data, size_t len) : storage(data, len) {}
+
+  uint8_t const *data() const noexcept { return (uint8_t const *) storage.data(); }
+
+  size_t size() const noexcept { return storage.size(); }
+};
+
+class BufferImplUString : public BufferImpl {
+  std::basic_string<uint8_t> storage;
+  friend class Buffer;
+
+public:
+  BufferImplUString(std::basic_string<uint8_t> data) : storage(std::move(data)) {}
+  BufferImplUString(uint8_t const *data, size_t len) : storage(data, len) {}
 
   uint8_t const *data() const noexcept { return (uint8_t const *) storage.data(); }
 
@@ -85,6 +102,9 @@ class Buffer {
 public:
   Buffer() : impl() {}
   Buffer(std::string str) : impl(std::make_unique<BufferImplString>(str)) {}
+  Buffer(char const *data, size_t len) : impl(std::make_unique<BufferImplString>(data, len)) {}
+  Buffer(std::basic_string<uint8_t> str) : impl(std::make_unique<BufferImplUString>(str)) {}
+  Buffer(uint8_t const *data, size_t len) : impl(std::make_unique<BufferImplUString>(data, len)) {}
   Buffer(flatbuffers::FlatBufferBuilder &&builder) : impl(std::make_unique<BufferImplBuilder>(std::move(builder))) {}
 
   uint8_t const *data() const noexcept { return impl ? impl->data() : nullptr; }
@@ -98,7 +118,10 @@ public:
   std::string str() { return *this; }
 };
 
-using Handler = std::function<Buffer(BufferView const &)>;
+inline BufferView::BufferView(Buffer const &buf) : storage(buf.data(), buf.size()) {}
+
+using Handler     = std::function<void(Buffer const &, std::function<void(std::exception_ptr ep, BufferView)>)>;
+using SyncHandler = std::function<Buffer(BufferView const &)>;
 
 struct MagicError : std::runtime_error {
   MagicError(char const *expected, char const *actual)
@@ -145,6 +168,13 @@ public:
   Service(Handler defaultHandler) : defaultHandler(defaultHandler) {}
 
   void RegisterHandler(std::string const &name, Handler handler) { mapped.emplace(name, handler); }
+  void RegisterHandler(std::string const &name, SyncHandler handler) {
+    mapped.emplace(name, [=](auto &buffer, auto cb) {
+      try {
+        cb(nullptr, handler(buffer));
+      } catch (...) { cb(std::current_exception(), {}); }
+    });
+  }
 
   void Broadcast(std::string_view const &key, BufferView data);
 

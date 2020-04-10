@@ -42,20 +42,25 @@ void Service::OnMessage(websocketpp::connection_hdl hdl, websocketpp::config::as
         auto payload = req->payload();
         auto it      = mapped.find(key);
         auto handler = it == mapped.end() ? defaultHandler : it->second;
-        flatbuffers::FlatBufferBuilder buf{256};
-        flatbuffers::Offset<proto::Service::Send::SendPacket> packet;
-        try {
-          auto ret     = handler({payload->data(), payload->size()});
-          auto payload = buf.CreateVector(ret.data(), ret.size());
-          auto respobj = proto::Service::Send::CreateResponse(buf, id, payload);
-          packet = proto::Service::Send::CreateSendPacket(buf, proto::Service::Send::Send_Response, respobj.Union());
-        } catch (std::exception const &ex) {
-          auto exinfo = proto::CreateExceptionInfoDirect(buf, ex.what());
-          auto exobj  = proto::Service::Send::CreateException(buf, id, exinfo);
-          packet = proto::Service::Send::CreateSendPacket(buf, proto::Service::Send::Send_Exception, exobj.Union());
-        }
-        buf.Finish(packet);
-        ws.send(hdl, buf.GetBufferPointer(), buf.GetSize(), opcode::BINARY);
+        handler({payload->data(), payload->size()}, [id, this](std::exception_ptr ep, BufferView view) {
+          flatbuffers::FlatBufferBuilder buf{256};
+          flatbuffers::Offset<proto::Service::Send::SendPacket> packet;
+          if (ep) {
+            try {
+              std::rethrow_exception(ep);
+            } catch (std::exception const &ex) {
+              auto exinfo = proto::CreateExceptionInfoDirect(buf, ex.what());
+              auto exobj  = proto::Service::Send::CreateException(buf, id, exinfo);
+              packet = proto::Service::Send::CreateSendPacket(buf, proto::Service::Send::Send_Exception, exobj.Union());
+            }
+          } else {
+            auto payload = buf.CreateVector(view.data(), view.size());
+            auto respobj = proto::Service::Send::CreateResponse(buf, id, payload);
+            packet = proto::Service::Send::CreateSendPacket(buf, proto::Service::Send::Send_Response, respobj.Union());
+          }
+          buf.Finish(packet);
+          ws.send(conhdr, buf.GetBufferPointer(), buf.GetSize(), opcode::BINARY);
+        });
       }
     }
   } catch (...) {

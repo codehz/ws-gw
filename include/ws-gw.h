@@ -120,7 +120,7 @@ public:
 
 inline BufferView::BufferView(Buffer const &buf) : storage(buf.data(), buf.size()) {}
 
-using Handler     = std::function<void(Buffer const &, std::function<void(std::exception_ptr ep, BufferView)>)>;
+using Handler     = std::function<void(Buffer, std::function<void(std::exception_ptr ep, BufferView)>)>;
 using SyncHandler = std::function<Buffer(BufferView const &)>;
 
 struct MagicError : std::runtime_error {
@@ -169,7 +169,7 @@ public:
 
   void RegisterHandler(std::string const &name, Handler handler) { mapped.emplace(name, handler); }
   void RegisterHandler(std::string const &name, SyncHandler handler) {
-    mapped.emplace(name, [=](auto &buffer, auto cb) {
+    mapped.emplace(name, [=](auto buffer, auto cb) {
       try {
         cb(nullptr, handler(buffer));
       } catch (...) { cb(std::current_exception(), {}); }
